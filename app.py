@@ -2,8 +2,8 @@ import os
 import tornado.ioloop
 import tornado.web
 import tornado.log
-
-import tornado.web
+import markdown2
+import queries
 from jinja2 import \
   Environment, PackageLoader, select_autoescape
 ENV = Environment(
@@ -12,6 +12,10 @@ ENV = Environment(
 
 
 class TemplateHandler(tornado.web.RequestHandler):
+    def initialize(self):
+        self.session = queries.Session(
+            'postgresql://postgres@localhost:5432/blog')
+
     def render_template(self, tpl, context):
         template = ENV.get_template(tpl)
         self.write(template.render(**context))
@@ -19,13 +23,39 @@ class TemplateHandler(tornado.web.RequestHandler):
 
 class MainHandler(TemplateHandler):
     def get(self):
-        pass
+        posts = self.session.query('SELECT * FROM post')
+        self.render_template("home.html", {'posts': posts})
+
+
+class BlogPostHandler(TemplateHandler):
+    def get(self, slug):
+        posts = self.session.query('SELECT * FROM post WHERE slug = %(slug)s',
+                                   {'slug': slug})
+        html = markdown2.markdown(posts[0]['body'])
+        context = {'post': posts[0], 'html': html}
+        self.render_template("post.html", context)
+
+
+class CommentHandler(TemplateHandler):
+    def get(self, slug):
+        posts = self.session.query('SELECT * FROM post WHERE slug = %(slug)s',
+                                   {'slug': slug})
+        self.render_template("comment.html", {'post': posts[0]})
+
+    def post(self, slug):
+        comment = self.get_body_argument('comment')
+        posts = self.session.query('SELECT * FROM post WHERE slug = %(slug)s',
+                                   {'slug': slug})
+        # Save Comment Here
+        self.redirect('/post/' + slug)
 
 
 def make_app():
     return tornado.web.Application(
         [
             (r"/", MainHandler),
+            (r"/post/(.*)/comment", CommentHandler),
+            (r"/post/(.*)", BlogPostHandler),
             (r"/static/(.*)", tornado.web.StaticFileHandler, {
                 'path': 'static'
             }),
